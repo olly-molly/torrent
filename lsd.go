@@ -77,9 +77,9 @@ func (me LsdServerWrapper) consumeAnnouncements() {
 		me.cl.lock()
 
 		for _, infoHash := range announce.InfoHashes {
-			if me.cl.dopplegangerAddr(announce.Source.String()) {
-				continue
-			}
+			// if me.cl.dopplegangerAddr(announce.Source.String()) {
+			// 	continue
+			// }
 
 			var infoHashBytes metainfo.Hash
 			err := infoHashBytes.FromHexString(infoHash)
