@@ -60,52 +60,46 @@ func (me LsdServerWrapper) Close() error {
 }
 
 func (me LsdServerWrapper) consumeAnnouncements() {
-	for announce := range me.LSP.C {
-		me.handleAnnounce(announce)
-	}
-}
+	defer func() {
+		if r := recover(); r != nil {
+			me.logger.Levelf(log.Error, "LSD announcement consumer panicked: %v", r)
+		}
+	}()
 
-func (me LsdServerWrapper) handleAnnounce(announce bep14.Announce) {
-	// Convert the announcement to peers and add them to torrents
-	for _, infoHash := range announce.InfoHashes {
-
-		if me.cl.dopplegangerAddr(announce.Source.String()) {
-			continue
+	for {
+		announce, ok := <-me.LSP.C
+		if !ok {
+			me.logger.Levelf(log.Info, "LSD announcement channel closed")
+			return
 		}
 
-		var infoHashBytes metainfo.Hash
-		err := infoHashBytes.FromHexString(infoHash)
-		if err != nil {
-			me.logger.Log(log.Fstr("Failed to decode infohash %s: %v", infoHash, err))
-			continue
+		// Process entire announcement under one lock (like DHT)
+		me.cl.lock()
+
+		for _, infoHash := range announce.InfoHashes {
+			if me.cl.dopplegangerAddr(announce.Source.String()) {
+				continue
+			}
+
+			var infoHashBytes metainfo.Hash
+			err := infoHashBytes.FromHexString(infoHash)
+			if err != nil {
+				me.logger.Levelf(log.Debug, "Failed to decode infohash %s: %v", infoHash, err)
+				continue
+			}
+
+			t := me.cl.torrent(infoHashBytes)
+			if t != nil {
+				ip := net.IP(announce.Source.Addr().AsSlice())
+				port := int(announce.Source.Port())
+				t.addPeers([]Peer{{
+					IP:     ip,
+					Port:   port,
+					Source: peerSourceLsd,
+				}})
+			}
 		}
-		// Add peer to the appropriate torrent
-		me.addPeerFromLsdAnnounce(infoHashBytes, announce.Source)
+
+		me.cl.unlock()
 	}
-}
-
-func (me LsdServerWrapper) addPeerFromLsdAnnounce(infoHash metainfo.Hash, source netip.AddrPort) {
-	// Lock the client
-
-	me.cl.lock()
-	defer me.cl.unlock()
-
-	// Find the torrent
-	t := me.cl.torrent(infoHash)
-	if t == nil {
-		// Torrent not found, ignore
-		return
-	}
-
-	// Convert netip.AddrPort to IP and port
-	ip := net.IP(source.Addr().AsSlice())
-	port := int(source.Port())
-
-	// Add peer to the torrent
-
-	t.addPeers([]Peer{{
-		IP:     ip,
-		Port:   port,
-		Source: peerSourceLsd,
-	}})
 }
